@@ -26,7 +26,7 @@ from db import (
 
 logger = logging.getLogger(__name__)
 
-MIN_CONFIDENCE = 80
+MIN_CONFIDENCE = 60
 
 # Key entities to extract for keyword matching
 KEY_ENTITIES = [
@@ -84,7 +84,7 @@ def _match_confidence(
     # token_set handles subset matching well (e.g. "Fed rate cut March" vs "Federal Reserve rate cut at March FOMC")
     fuzzy_score = max(token_sort, token_set)
 
-    if fuzzy_score >= 85:
+    if fuzzy_score >= 70:
         return int(fuzzy_score), "fuzzy"
 
     # --- Strategy 4: Keyword entity matching ---
