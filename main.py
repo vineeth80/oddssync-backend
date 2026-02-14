@@ -15,7 +15,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from config import settings
-from db import init_db, set_last_refresh
+from db import init_db, close_db, set_last_refresh
 from routers import health, markets
 from routers.health import record_error
 from scheduler import start_scheduler, stop_scheduler
@@ -50,8 +50,11 @@ async def _initial_data_load() -> None:
         from services.matcher import run_matching
 
         logger.info("Starting initial data load...")
-        k_count = await kalshi_fetch()
-        p_count = await poly_fetch()
+        # Fetch from both APIs concurrently
+        k_count, p_count = await asyncio.gather(
+            kalshi_fetch(),
+            poly_fetch(),
+        )
         m_count = await run_matching()
         set_last_refresh("full")
         set_last_refresh("prices")
@@ -80,8 +83,14 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown
+    # Shutdown — clean up all resources
     stop_scheduler()
+
+    from services.kalshi import close_client as close_kalshi
+    from services.polymarket import close_clients as close_poly
+    await close_kalshi()
+    await close_poly()
+    await close_db()
     logger.info("Server shutting down")
 
 

@@ -1,10 +1,12 @@
-"""Kalshi API client — fetch and store all open markets."""
+"""Kalshi API client — fetch and store all open markets.
+
+Uses a shared httpx.AsyncClient for connection reuse across requests.
+"""
 
 from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
 from typing import Any, Optional
 
 import httpx
@@ -17,14 +19,42 @@ logger = logging.getLogger(__name__)
 BASE = settings.kalshi_base_url.rstrip("/")
 TIMEOUT = 30.0
 
+# Shared HTTP client — created once, reused across all requests
+_client: Optional[httpx.AsyncClient] = None
+
+# Pre-compiled regex for title normalization
+_PUNCT_RE = re.compile(r"[^\w\s]")
+_STOPWORDS = frozenset({
+    "will", "the", "a", "an", "be", "in", "on", "at", "to", "of",
+    "by", "for", "is", "it", "or", "and", "this", "that",
+})
+
+
+def _get_client() -> httpx.AsyncClient:
+    """Return the shared HTTP client, creating it if needed."""
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(
+            base_url=BASE,
+            timeout=TIMEOUT,
+            headers={"Accept": "application/json"},
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
+    return _client
+
+
+async def close_client() -> None:
+    """Close the shared HTTP client."""
+    global _client
+    if _client is not None and not _client.is_closed:
+        await _client.aclose()
+        _client = None
+
 
 def _normalize_title(title: str) -> str:
     """Lowercase, strip punctuation, remove common stopwords."""
-    t = title.lower().strip()
-    t = re.sub(r"[^\w\s]", " ", t)
-    stopwords = {"will", "the", "a", "an", "be", "in", "on", "at", "to", "of",
-                 "by", "for", "is", "it", "or", "and", "this", "that"}
-    words = [w for w in t.split() if w not in stopwords and len(w) > 1]
+    t = _PUNCT_RE.sub(" ", title.lower().strip())
+    words = [w for w in t.split() if w not in _STOPWORDS and len(w) > 1]
     return " ".join(words)
 
 
@@ -35,38 +65,36 @@ async def fetch_all_markets(max_pages: int = 10) -> list[dict[str, Any]]:
     """
     all_markets: list[dict[str, Any]] = []
     cursor: Optional[str] = None
+    client = _get_client()
 
-    async with httpx.AsyncClient(
-        base_url=BASE, timeout=TIMEOUT, headers={"Accept": "application/json"}
-    ) as client:
-        for page in range(max_pages):
-            try:
-                params: dict[str, Any] = {"limit": 1000, "status": "open"}
-                if cursor:
-                    params["cursor"] = cursor
+    for page in range(max_pages):
+        try:
+            params: dict[str, Any] = {"limit": 1000, "status": "open"}
+            if cursor:
+                params["cursor"] = cursor
 
-                resp = await client.get("/markets", params=params)
-                resp.raise_for_status()
-                data = resp.json()
-            except Exception:
-                logger.error("Kalshi /markets page %d failed", page + 1, exc_info=True)
-                break
+            resp = await client.get("/markets", params=params)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception:
+            logger.error("Kalshi /markets page %d failed", page + 1, exc_info=True)
+            break
 
-            raw = data.get("markets", [])
-            if not raw:
-                break
+        raw = data.get("markets", [])
+        if not raw:
+            break
 
-            for m in raw:
-                normalised = _parse_market(m)
-                if normalised:
-                    all_markets.append(normalised)
+        for m in raw:
+            normalised = _parse_market(m)
+            if normalised:
+                all_markets.append(normalised)
 
-            cursor = data.get("cursor")
-            if not cursor:
-                break
+        cursor = data.get("cursor")
+        if not cursor:
+            break
 
-            logger.debug("Kalshi page %d: %d markets (total %d)",
-                         page + 1, len(raw), len(all_markets))
+        logger.debug("Kalshi page %d: %d markets (total %d)",
+                     page + 1, len(raw), len(all_markets))
 
     logger.info("Kalshi: fetched %d open markets", len(all_markets))
     return all_markets
@@ -125,29 +153,25 @@ async def fetch_and_store() -> int:
 
 async def fetch_market_detail(ticker: str) -> Optional[dict[str, Any]]:
     """Fetch a single market's detail including orderbook."""
-    async with httpx.AsyncClient(
-        base_url=BASE, timeout=TIMEOUT, headers={"Accept": "application/json"}
-    ) as client:
-        try:
-            resp = await client.get(f"/markets/{ticker}")
-            resp.raise_for_status()
-            data = resp.json()
-            market = data.get("market", data)
-            return _parse_market(market)
-        except Exception:
-            logger.error("Kalshi detail fetch failed for %s", ticker, exc_info=True)
-            return None
+    client = _get_client()
+    try:
+        resp = await client.get(f"/markets/{ticker}")
+        resp.raise_for_status()
+        data = resp.json()
+        market = data.get("market", data)
+        return _parse_market(market)
+    except Exception:
+        logger.error("Kalshi detail fetch failed for %s", ticker, exc_info=True)
+        return None
 
 
 async def fetch_orderbook(ticker: str) -> Optional[dict[str, Any]]:
     """Fetch orderbook depth for a ticker."""
-    async with httpx.AsyncClient(
-        base_url=BASE, timeout=TIMEOUT, headers={"Accept": "application/json"}
-    ) as client:
-        try:
-            resp = await client.get(f"/markets/{ticker}/orderbook")
-            resp.raise_for_status()
-            return resp.json()
-        except Exception:
-            logger.debug("Kalshi orderbook fetch failed for %s", ticker, exc_info=True)
-            return None
+    client = _get_client()
+    try:
+        resp = await client.get(f"/markets/{ticker}/orderbook")
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        logger.debug("Kalshi orderbook fetch failed for %s", ticker, exc_info=True)
+        return None

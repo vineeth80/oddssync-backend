@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter
 
 from db import (
     count_kalshi_markets, count_poly_markets, count_matched_markets,
-    get_last_refresh, get_all_kalshi_markets, get_all_poly_markets,
+    get_last_refresh,
 )
 from models.schemas import HealthResponse
 
@@ -35,31 +36,52 @@ def clear_errors() -> None:
 @router.get("/debug/sample-titles")
 async def debug_sample_titles():
     """Return sample titles from both platforms for debugging matching."""
-    kalshi = await get_all_kalshi_markets(status="open")
-    poly = await get_all_poly_markets(active=True)
+    from db import _get_db
+    db = await _get_db()
+
+    # Fetch only 10 samples from each table using SQL LIMIT
+    k_cursor = await db.execute(
+        "SELECT title, title_normalized FROM kalshi_markets WHERE status = 'open' ORDER BY volume_24h DESC LIMIT 10"
+    )
+    k_samples = [
+        {"title": r[0], "normalized": r[1]}
+        for r in await k_cursor.fetchall()
+    ]
+
+    p_cursor = await db.execute(
+        "SELECT question, question_normalized FROM poly_markets WHERE active = 1 ORDER BY volume DESC LIMIT 10"
+    )
+    p_samples = [
+        {"question": r[0], "normalized": r[1]}
+        for r in await p_cursor.fetchall()
+    ]
+
+    k_count = await count_kalshi_markets()
+    p_count = await count_poly_markets()
+
     return {
-        "kalshi_count": len(kalshi),
-        "poly_count": len(poly),
-        "kalshi_samples": [
-            {"title": m.get("title", ""), "normalized": m.get("title_normalized", "")}
-            for m in kalshi[:10]
-        ],
-        "poly_samples": [
-            {"question": m.get("question", ""), "normalized": m.get("question_normalized", "")}
-            for m in poly[:10]
-        ],
+        "kalshi_count": k_count,
+        "poly_count": p_count,
+        "kalshi_samples": k_samples,
+        "poly_samples": p_samples,
     }
 
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check() -> HealthResponse:
     """Returns server status, last data refresh timestamps, market counts, any API errors."""
+    # Run all three count queries concurrently
+    k_count, p_count, m_count = await asyncio.gather(
+        count_kalshi_markets(),
+        count_poly_markets(),
+        count_matched_markets(),
+    )
     return HealthResponse(
         status="ok",
         version="0.1.0",
-        kalshi_markets=await count_kalshi_markets(),
-        poly_markets=await count_poly_markets(),
-        matched_markets=await count_matched_markets(),
+        kalshi_markets=k_count,
+        poly_markets=p_count,
+        matched_markets=m_count,
         last_price_refresh=get_last_refresh("prices"),
         last_full_refresh=get_last_refresh("full"),
         errors=list(_recent_errors),

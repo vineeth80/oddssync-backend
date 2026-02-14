@@ -1,7 +1,7 @@
 """APScheduler job definitions.
 
 Schedule:
-  - Every 60 seconds:  Fetch updated prices for all matched markets (batch)
+  - Every 60 seconds:  Fetch updated prices from both platforms concurrently
   - Every 5 minutes:   Full market list refresh from both platforms, re-run matcher
   - Every 1 hour:      Full orderbook depth refresh for top 20 arb opportunities
 
@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -27,15 +26,19 @@ scheduler = AsyncIOScheduler()
 
 
 async def _price_refresh_job() -> None:
-    """Fetch updated prices for matched markets (every 60s)."""
+    """Fetch updated prices for matched markets (every 60s).
+
+    Fetches from both APIs concurrently with asyncio.gather.
+    """
     try:
         from services.kalshi import fetch_and_store as kalshi_fetch
         from services.polymarket import fetch_and_store as poly_fetch
 
-        # Re-fetch all markets to get updated prices
-        # Both clients handle pagination and error handling internally
-        k_count = await kalshi_fetch()
-        p_count = await poly_fetch()
+        # Fetch from both APIs concurrently
+        k_count, p_count = await asyncio.gather(
+            kalshi_fetch(),
+            poly_fetch(),
+        )
         set_last_refresh("prices")
         logger.info("Price refresh: kalshi=%d, poly=%d", k_count, p_count)
     except Exception as e:
@@ -45,14 +48,20 @@ async def _price_refresh_job() -> None:
 
 
 async def _full_refresh_job() -> None:
-    """Full market list refresh + re-run matcher (every 5 min)."""
+    """Full market list refresh + re-run matcher (every 5 min).
+
+    Fetches from both APIs concurrently, then runs matcher.
+    """
     try:
         from services.kalshi import fetch_and_store as kalshi_fetch
         from services.polymarket import fetch_and_store as poly_fetch
         from services.matcher import run_matching
 
-        k_count = await kalshi_fetch()
-        p_count = await poly_fetch()
+        # Fetch concurrently, then match (matching needs both datasets)
+        k_count, p_count = await asyncio.gather(
+            kalshi_fetch(),
+            poly_fetch(),
+        )
         m_count = await run_matching()
         set_last_refresh("full")
         logger.info("Full refresh: kalshi=%d, poly=%d, matches=%d", k_count, p_count, m_count)
@@ -63,7 +72,10 @@ async def _full_refresh_job() -> None:
 
 
 async def _depth_refresh_job() -> None:
-    """Orderbook depth refresh for top arb opportunities (every 1 hour)."""
+    """Orderbook depth refresh for top arb opportunities (every 1 hour).
+
+    Fetches orderbooks concurrently in batches of 5 to avoid rate limiting.
+    """
     try:
         from services.kalshi import fetch_orderbook as kalshi_orderbook
         from services.polymarket import fetch_orderbook as poly_orderbook
@@ -80,17 +92,17 @@ async def _depth_refresh_job() -> None:
         arb_markets.sort(key=lambda x: x[1]["roi_pct"], reverse=True)
         top_20 = arb_markets[:20]
 
-        for m, _ in top_20:
-            try:
-                await kalshi_orderbook(m["kalshi_ticker"])
-            except Exception:
-                pass
-            try:
+        # Fetch orderbooks concurrently in batches of 5
+        batch_size = 5
+        for i in range(0, len(top_20), batch_size):
+            batch = top_20[i : i + batch_size]
+            tasks = []
+            for m, _ in batch:
+                tasks.append(kalshi_orderbook(m["kalshi_ticker"]))
                 token_yes = m.get("clob_token_yes", "")
                 if token_yes:
-                    await poly_orderbook(token_yes)
-            except Exception:
-                pass
+                    tasks.append(poly_orderbook(token_yes))
+            await asyncio.gather(*tasks, return_exceptions=True)
 
         set_last_refresh("depth")
         logger.info("Depth refresh: checked %d markets", len(top_20))

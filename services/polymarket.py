@@ -1,11 +1,13 @@
-"""Polymarket API client — fetch and store all active events/markets."""
+"""Polymarket API client — fetch and store all active events/markets.
+
+Uses shared httpx.AsyncClient instances for connection reuse.
+"""
 
 from __future__ import annotations
 
 import json
 import logging
 import re
-from datetime import datetime, timezone
 from typing import Any, Optional
 
 import httpx
@@ -19,14 +21,58 @@ GAMMA_BASE = settings.poly_gamma_url.rstrip("/")
 CLOB_BASE = settings.poly_clob_url.rstrip("/")
 TIMEOUT = 30.0
 
+# Shared HTTP clients — created once, reused across all requests
+_gamma_client: Optional[httpx.AsyncClient] = None
+_clob_client: Optional[httpx.AsyncClient] = None
+
+# Pre-compiled regex for question normalization
+_PUNCT_RE = re.compile(r"[^\w\s]")
+_STOPWORDS = frozenset({
+    "will", "the", "a", "an", "be", "in", "on", "at", "to", "of",
+    "by", "for", "is", "it", "or", "and", "this", "that",
+})
+
+
+def _get_gamma_client() -> httpx.AsyncClient:
+    """Return the shared Gamma API client."""
+    global _gamma_client
+    if _gamma_client is None or _gamma_client.is_closed:
+        _gamma_client = httpx.AsyncClient(
+            base_url=GAMMA_BASE,
+            timeout=TIMEOUT,
+            headers={"Accept": "application/json"},
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
+    return _gamma_client
+
+
+def _get_clob_client() -> httpx.AsyncClient:
+    """Return the shared CLOB API client."""
+    global _clob_client
+    if _clob_client is None or _clob_client.is_closed:
+        _clob_client = httpx.AsyncClient(
+            base_url=CLOB_BASE,
+            timeout=TIMEOUT,
+            headers={"Accept": "application/json"},
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
+    return _clob_client
+
+
+async def close_clients() -> None:
+    """Close both shared HTTP clients."""
+    global _gamma_client, _clob_client
+    for c in (_gamma_client, _clob_client):
+        if c is not None and not c.is_closed:
+            await c.aclose()
+    _gamma_client = None
+    _clob_client = None
+
 
 def _normalize_question(question: str) -> str:
     """Lowercase, strip punctuation, remove common stopwords."""
-    t = question.lower().strip()
-    t = re.sub(r"[^\w\s]", " ", t)
-    stopwords = {"will", "the", "a", "an", "be", "in", "on", "at", "to", "of",
-                 "by", "for", "is", "it", "or", "and", "this", "that"}
-    words = [w for w in t.split() if w not in stopwords and len(w) > 1]
+    t = _PUNCT_RE.sub(" ", question.lower().strip())
+    words = [w for w in t.split() if w not in _STOPWORDS and len(w) > 1]
     return " ".join(words)
 
 
@@ -37,39 +83,37 @@ async def fetch_all_markets(max_pages: int = 20) -> list[dict[str, Any]]:
     Returns list of normalised dicts ready for db insertion.
     """
     all_markets: list[dict[str, Any]] = []
+    client = _get_gamma_client()
 
-    async with httpx.AsyncClient(
-        base_url=GAMMA_BASE, timeout=TIMEOUT, headers={"Accept": "application/json"}
-    ) as client:
-        for page in range(max_pages):
-            offset = page * 100
-            try:
-                resp = await client.get(
-                    "/events",
-                    params={"active": "true", "closed": "false", "limit": 100, "offset": offset},
-                )
-                resp.raise_for_status()
-                data = resp.json()
-            except Exception:
-                logger.error("Polymarket /events page %d failed", page + 1, exc_info=True)
-                break
+    for page in range(max_pages):
+        offset = page * 100
+        try:
+            resp = await client.get(
+                "/events",
+                params={"active": "true", "closed": "false", "limit": 100, "offset": offset},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception:
+            logger.error("Polymarket /events page %d failed", page + 1, exc_info=True)
+            break
 
-            events = data if isinstance(data, list) else data.get("data", data.get("events", []))
-            if not events:
-                break
+        events = data if isinstance(data, list) else data.get("data", data.get("events", []))
+        if not events:
+            break
 
-            for event in events:
-                markets = event.get("markets", [])
-                for m in markets:
-                    normalised = _parse_market(m, event)
-                    if normalised:
-                        all_markets.append(normalised)
+        for event in events:
+            markets = event.get("markets", [])
+            for m in markets:
+                normalised = _parse_market(m, event)
+                if normalised:
+                    all_markets.append(normalised)
 
-            logger.debug("Polymarket page %d: %d events (total markets %d)",
-                         page + 1, len(events), len(all_markets))
+        logger.debug("Polymarket page %d: %d events (total markets %d)",
+                     page + 1, len(events), len(all_markets))
 
-            if len(events) < 100:
-                break
+        if len(events) < 100:
+            break
 
     logger.info("Polymarket: fetched %d active markets", len(all_markets))
     return all_markets
@@ -182,30 +226,26 @@ async def fetch_clob_prices(token_ids: list[str]) -> dict[str, float]:
     """Batch fetch prices from the CLOB API."""
     if not token_ids:
         return {}
-    async with httpx.AsyncClient(
-        base_url=CLOB_BASE, timeout=TIMEOUT, headers={"Accept": "application/json"}
-    ) as client:
-        try:
-            resp = await client.get(
-                "/prices",
-                params={"token_ids": ",".join(token_ids)},
-            )
-            resp.raise_for_status()
-            return resp.json()
-        except Exception:
-            logger.debug("CLOB /prices failed", exc_info=True)
-            return {}
+    client = _get_clob_client()
+    try:
+        resp = await client.get(
+            "/prices",
+            params={"token_ids": ",".join(token_ids)},
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        logger.debug("CLOB /prices failed", exc_info=True)
+        return {}
 
 
 async def fetch_orderbook(token_id: str) -> Optional[dict[str, Any]]:
     """Fetch orderbook depth for a token."""
-    async with httpx.AsyncClient(
-        base_url=CLOB_BASE, timeout=TIMEOUT, headers={"Accept": "application/json"}
-    ) as client:
-        try:
-            resp = await client.get("/book", params={"token_id": token_id})
-            resp.raise_for_status()
-            return resp.json()
-        except Exception:
-            logger.debug("CLOB orderbook fetch failed for %s", token_id, exc_info=True)
-            return None
+    client = _get_clob_client()
+    try:
+        resp = await client.get("/book", params={"token_id": token_id})
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        logger.debug("CLOB orderbook fetch failed for %s", token_id, exc_info=True)
+        return None

@@ -1,4 +1,7 @@
-"""GET /markets, GET /markets/{id}, GET /markets/arbs — matched market data."""
+"""GET /markets, GET /markets/{id} — matched market data.
+
+Uses SQL-level filtering, sorting, and pagination for efficiency.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +10,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Query
 
-from db import get_all_matched_markets, get_matched_market_by_id, get_last_refresh
+from db import get_matched_markets_filtered, get_matched_market_by_id, get_last_refresh
 from models.schemas import (
     ArbOut,
     KalshiMarketOut,
@@ -87,57 +90,70 @@ async def list_markets(
     limit: int = Query(50, ge=1, le=200, description="Pagination limit"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
 ) -> MarketsResponse:
-    """Returns all matched markets with current prices from both platforms."""
-    matched = await get_all_matched_markets()
+    """Returns all matched markets with current prices from both platforms.
 
-    # Build output with arb calculations
-    results: list[tuple[MatchedMarketOut, Optional[dict]]] = []
-    for row in matched:
-        k_yes = row.get("k_yes_price", 0) or 0
-        p_yes = row.get("p_yes_price", 0) or 0
-        arb = calculate_arb(k_yes, p_yes)
-        out = _build_market_out(row, arb)
-        results.append((out, arb))
+    Filtering/sorting/pagination pushed to SQL for large datasets.
+    ROI sorting and arbs_only/min_spread filters still done in-memory
+    since they require arb calculation.
+    """
+    # For sort=roi, arbs_only, or min_spread we need to compute arbs on the full set
+    needs_arb_filter = arbs_only or min_spread is not None or sort == "roi"
 
-    # --- Filtering ---
-    if category:
-        results = [(o, a) for o, a in results if category.lower() in (o.category or "").lower()]
-
-    if min_spread is not None:
-        results = [(o, a) for o, a in results if o.spread >= min_spread]
-
-    if arbs_only:
-        results = [(o, a) for o, a in results if a is not None]
-
-    if search:
-        s_lower = search.lower()
-        results = [(o, a) for o, a in results if s_lower in o.title.lower()]
-
-    # --- Sorting ---
-    reverse = order != "asc"
-    if sort == "spread":
-        results.sort(key=lambda x: x[0].spread, reverse=reverse)
-    elif sort == "roi":
-        results.sort(
-            key=lambda x: x[1]["roi_pct"] if x[1] else -1,
-            reverse=reverse,
-        )
-    elif sort == "volume":
-        results.sort(
-            key=lambda x: x[0].kalshi.volume_24h + x[0].poly.volume_24h,
-            reverse=reverse,
-        )
-    elif sort == "close_date":
-        results.sort(
-            key=lambda x: x[0].close_date or "",
-            reverse=reverse,
+    if needs_arb_filter:
+        # Fetch all (with category/search filtered at SQL level), compute arbs in memory
+        rows, _ = await get_matched_markets_filtered(
+            category=category,
+            search=search,
+            sort="spread",
+            order=order or "desc",
+            limit=10000,  # fetch all for arb filtering
+            offset=0,
         )
 
-    total = len(results)
-    arb_count = sum(1 for _, a in results if a is not None)
+        results: list[tuple[MatchedMarketOut, Optional[dict]]] = []
+        for row in rows:
+            k_yes = row.get("k_yes_price", 0) or 0
+            p_yes = row.get("p_yes_price", 0) or 0
+            arb = calculate_arb(k_yes, p_yes)
+            out = _build_market_out(row, arb)
+            results.append((out, arb))
 
-    # --- Pagination ---
-    results = results[offset : offset + limit]
+        if min_spread is not None:
+            results = [(o, a) for o, a in results if o.spread >= min_spread]
+
+        if arbs_only:
+            results = [(o, a) for o, a in results if a is not None]
+
+        if sort == "roi":
+            reverse = order != "asc"
+            results.sort(
+                key=lambda x: x[1]["roi_pct"] if x[1] else -1,
+                reverse=reverse,
+            )
+
+        total = len(results)
+        arb_count = sum(1 for _, a in results if a is not None)
+        results = results[offset : offset + limit]
+    else:
+        # Pure SQL path — no arb computation for filtering/sorting
+        rows, total = await get_matched_markets_filtered(
+            category=category,
+            search=search,
+            sort=sort or "spread",
+            order=order or "desc",
+            limit=limit,
+            offset=offset,
+        )
+
+        results = []
+        for row in rows:
+            k_yes = row.get("k_yes_price", 0) or 0
+            p_yes = row.get("p_yes_price", 0) or 0
+            arb = calculate_arb(k_yes, p_yes)
+            out = _build_market_out(row, arb)
+            results.append((out, arb))
+
+        arb_count = sum(1 for _, a in results if a is not None)
 
     return MarketsResponse(
         markets=[o for o, _ in results],
