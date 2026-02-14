@@ -11,9 +11,11 @@ from typing import Any, Optional
 
 import aiosqlite
 
+from config import settings
+
 logger = logging.getLogger(__name__)
 
-DB_PATH = "oddssync.db"
+DB_PATH = settings.db_path
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS kalshi_markets (

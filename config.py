@@ -1,4 +1,8 @@
-"""Settings from env vars via pydantic BaseSettings."""
+"""Settings from env vars via pydantic BaseSettings.
+
+Railway sets PORT automatically. All other settings can be configured
+via Railway's environment variables dashboard.
+"""
 
 from __future__ import annotations
 
@@ -12,12 +16,12 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    # Server
+    # Server — Railway sets PORT automatically
     host: str = "0.0.0.0"
     port: int = 8000
-    debug: bool = True
+    debug: bool = False
 
-    # CORS
+    # CORS — add your deployed frontend URL here
     allowed_origins: str = "http://localhost:3000,http://localhost:5173"
 
     # Data refresh intervals (seconds)
@@ -31,6 +35,9 @@ class Settings(BaseSettings):
     # Polymarket
     poly_gamma_url: str = "https://gamma-api.polymarket.com"
     poly_clob_url: str = "https://clob.polymarket.com"
+
+    # Database path — set to /data/oddssync.db with a Railway volume for persistence
+    db_path: str = "oddssync.db"
 
     # Rate limiting
     rate_limit: str = "60/minute"
