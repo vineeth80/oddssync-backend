@@ -2,17 +2,19 @@
 
 Matching strategy (in priority order):
 1. Exact title match — normalized titles compared directly.
-2. Fuzzy match — rapidfuzz, threshold 85% on normalized titles.
+2. Fuzzy match — rapidfuzz, threshold 70% on normalized titles.
 3. Category + date match — same category and close date within 24h.
 4. Event keyword extraction — key entities + timeframe matching.
 
-Only surface matches with confidence >= 80 to the frontend.
+Uses keyword-based blocking to avoid O(n*m) full comparisons.
+Only surface matches with confidence >= 60 to the frontend.
 """
 
 from __future__ import annotations
 
 import logging
 import re
+from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
 
@@ -36,6 +38,9 @@ KEY_ENTITIES = [
     "super bowl", "nfl", "nba", "world cup", "olympics", "oscars", "grammys",
     "elon", "musk", "tesla", "openai", "gpt", "tiktok", "meta",
 ]
+
+# Minimum significant words to extract from a title for blocking
+MIN_WORD_LEN = 3
 
 
 def _parse_close_time(t: Optional[str]) -> Optional[datetime]:
@@ -61,6 +66,12 @@ def _extract_entities(text: str) -> set[str]:
         if entity in lower:
             found.add(entity)
     return found
+
+
+def _extract_keywords(text: str) -> set[str]:
+    """Extract significant keywords from normalized text for blocking."""
+    words = text.split()
+    return {w for w in words if len(w) >= MIN_WORD_LEN}
 
 
 def _match_confidence(
@@ -122,6 +133,9 @@ def _match_confidence(
 async def run_matching() -> int:
     """Run the matching pipeline on all markets in the DB.
 
+    Uses keyword-based blocking: only compares markets that share at least
+    one significant keyword, reducing comparisons from O(n*m) to manageable levels.
+
     Returns count of matches found.
     """
     kalshi_markets = await get_all_kalshi_markets(status="open")
@@ -132,23 +146,49 @@ async def run_matching() -> int:
                      len(kalshi_markets), len(poly_markets))
         return 0
 
-    logger.info("Matcher: comparing %d Kalshi × %d Polymarket markets",
+    logger.info("Matcher: %d Kalshi × %d Polymarket markets — building keyword index",
                 len(kalshi_markets), len(poly_markets))
+
+    # Build keyword → poly market index for blocking
+    poly_by_keyword: dict[str, list[int]] = defaultdict(list)
+    poly_with_norm: list[tuple[int, dict]] = []
+    for i, pm in enumerate(poly_markets):
+        p_norm = pm.get("question_normalized", "")
+        if not p_norm:
+            continue
+        poly_with_norm.append((i, pm))
+        keywords = _extract_keywords(p_norm)
+        entities = _extract_entities(p_norm)
+        for kw in keywords | entities:
+            poly_by_keyword[kw].append(i)
 
     matches: list[dict[str, Any]] = []
     used_poly_ids: set[str] = set()
     now = datetime.now(timezone.utc).isoformat()
+    comparisons = 0
 
     for km in kalshi_markets:
         k_norm = km.get("title_normalized", "")
         if not k_norm:
             continue
 
+        # Find candidate poly markets that share keywords
+        k_keywords = _extract_keywords(k_norm)
+        k_entities = _extract_entities(k_norm)
+        candidate_indices: set[int] = set()
+        for kw in k_keywords | k_entities:
+            if kw in poly_by_keyword:
+                candidate_indices.update(poly_by_keyword[kw])
+
+        if not candidate_indices:
+            continue
+
         best_confidence = 0
         best_method = "none"
         best_poly: Optional[dict[str, Any]] = None
 
-        for pm in poly_markets:
+        for idx in candidate_indices:
+            pm = poly_markets[idx]
             p_id = pm.get("id", "")
             if p_id in used_poly_ids:
                 continue
@@ -157,6 +197,7 @@ async def run_matching() -> int:
             if not p_norm:
                 continue
 
+            comparisons += 1
             confidence, method = _match_confidence(
                 k_norm, p_norm,
                 km.get("category", ""),
@@ -187,5 +228,5 @@ async def run_matching() -> int:
             )
 
     count = await upsert_matched_markets(matches)
-    logger.info("Matcher: found and stored %d matches", count)
+    logger.info("Matcher: %d comparisons, found and stored %d matches", comparisons, count)
     return count
