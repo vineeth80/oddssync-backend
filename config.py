@@ -21,8 +21,9 @@ class Settings(BaseSettings):
     port: int = 8000
     debug: bool = False
 
-    # CORS — add your deployed frontend URL here
-    allowed_origins: str = "http://localhost:3000,http://localhost:5173"
+    # CORS — comma-separated origins (set via ALLOWED_ORIGINS env var)
+    # Default: allow all origins for initial setup. Lock down later.
+    allowed_origins: str = "*"
 
     # Data refresh intervals (seconds)
     price_refresh_interval: int = 60
@@ -44,7 +45,10 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins(self) -> list[str]:
-        return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
+        raw = self.allowed_origins.strip()
+        if raw == "*":
+            return ["*"]
+        return [o.strip() for o in raw.split(",") if o.strip()]
 
 
 settings = Settings()

@@ -109,11 +109,11 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# CORS
+# CORS — credentials cannot be used with wildcard origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_credentials=True,
+    allow_credentials="*" not in settings.cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -121,6 +121,12 @@ app.add_middleware(
 # Routers
 app.include_router(health.router, tags=["health"])
 app.include_router(markets.router, tags=["markets"])
+
+
+@app.get("/")
+async def root():
+    """Root endpoint — confirms the API is reachable."""
+    return {"status": "ok", "docs": "/docs", "health": "/health"}
 
 
 # ---------------------------------------------------------------------------
