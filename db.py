@@ -332,6 +332,8 @@ async def get_matched_markets_filtered(
         "volume": f"(COALESCE(k.volume_24h, 0) + COALESCE(p.volume, 0)) {dir_sql}",
         "close_date": f"COALESCE(k.close_time, p.close_time) {dir_sql}",
         "confidence": f"mm.match_confidence {dir_sql}",
+        "kalshi": f"k.yes_price {dir_sql}",
+        "poly": f"p.yes_price {dir_sql}",
     }
     order_sql = sort_map.get(sort, sort_map["spread"])
 
