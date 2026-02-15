@@ -164,6 +164,19 @@ async function fetchPolymarketMarkets(): Promise<PolymarketMarketResponse[]> {
 
     const markets = await response.json() as PolymarketMarketResponse[];
 
+    // Debug: Log first market to see actual structure
+    if (markets.length > 0) {
+      console.log(`[POLYMARKET DEBUG] First market sample:`, JSON.stringify({
+        slug: markets[0].slug,
+        hasOutcomes: !!markets[0].outcomes,
+        outcomesType: typeof markets[0].outcomes,
+        outcomesValue: markets[0].outcomes,
+        hasOutcomePrices: !!markets[0].outcomePrices,
+        hasEndDateIso: !!markets[0].endDateIso,
+        active: markets[0].active
+      }));
+    }
+
     // Filter for markets with valid data and track rejection reasons
     let rejectionReasons = { active: 0, outcomes: 0, outcomePrices: 0, endDateIso: 0 };
     const filtered = markets.filter((m: PolymarketMarketResponse) => {
