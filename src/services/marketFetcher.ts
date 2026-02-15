@@ -248,7 +248,31 @@ async function fetchKalshiMarkets(): Promise<KalshiMarketResponse[]> {
   try {
     console.log(`[KALSHI] Fetching up to ${KALSHI_LIMIT} markets...`);
 
-    // Login to get session token
+    // Try using API key directly first (new API might not need login)
+    if (KALSHI_API_KEY) {
+      console.log("[KALSHI] Trying direct API key authentication");
+      const directResponse = await fetch(
+        `${KALSHI_API}/markets?limit=${KALSHI_LIMIT}&status=open`,
+        {
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${KALSHI_API_KEY}`,
+          },
+        }
+      );
+
+      if (directResponse.ok) {
+        console.log("[KALSHI] Direct API key auth successful!");
+        const data = await directResponse.json() as { markets?: KalshiMarketResponse[] };
+        const markets = data.markets || [];
+        console.log(`[KALSHI] Got ${markets.length} markets`);
+        return markets;
+      } else {
+        console.log(`[KALSHI] Direct auth failed (${directResponse.status}), trying login flow...`);
+      }
+    }
+
+    // Fallback to login flow if direct auth fails
     const token = await kalshiLogin();
     if (!token) {
       console.error("[KALSHI] Cannot fetch markets without authentication");
