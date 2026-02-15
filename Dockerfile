@@ -7,8 +7,8 @@ WORKDIR /app
 COPY package*.json ./
 COPY tsconfig.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install ALL dependencies (including TypeScript for build)
+RUN npm ci
 
 # Copy source
 COPY src ./src
@@ -21,10 +21,14 @@ FROM node:22-alpine
 
 WORKDIR /app
 
-# Copy built files and dependencies
+# Copy package files first
+COPY package*.json ./
+
+# Install ONLY production dependencies
+RUN npm ci --only=production
+
+# Copy built files from builder
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./
 
 # Expose port
 EXPOSE 8080
