@@ -25,6 +25,7 @@ const POLYMARKET_CLOB_API = "https://clob.polymarket.com";
 
 // Kalshi API endpoint
 const KALSHI_API = "https://trading-api.kalshi.com/trade-api/v2";
+const KALSHI_API_KEY = process.env.KALSHI_API_KEY || "";
 
 // Configuration
 const POLYMARKET_LIMIT = 500; // Increased from 100
@@ -185,11 +186,23 @@ async function fetchPolymarketMarkets(): Promise<PolymarketMarketResponse[]> {
  */
 async function fetchKalshiMarkets(): Promise<KalshiMarketResponse[]> {
   try {
-    console.log(`[KALSHI] Fetching up to ${KALSHI_LIMIT} markets (public API)...`);
+    console.log(`[KALSHI] Fetching up to ${KALSHI_LIMIT} markets...`);
 
-    // Use public API (no authentication needed)
+    // Prepare headers with API key if available
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+
+    if (KALSHI_API_KEY) {
+      headers["Authorization"] = `Bearer ${KALSHI_API_KEY}`;
+      console.log("[KALSHI] Using API key for authentication");
+    } else {
+      console.log("[KALSHI] Warning: No API key provided, trying public access");
+    }
+
     const response = await fetch(
-      `${KALSHI_API}/markets?limit=${KALSHI_LIMIT}&status=open`
+      `${KALSHI_API}/markets?limit=${KALSHI_LIMIT}&status=open`,
+      { headers }
     );
 
     if (!response.ok) {
