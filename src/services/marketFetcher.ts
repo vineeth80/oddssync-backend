@@ -23,8 +23,8 @@ const POLY_FEE = 0.01; // 1%
 const POLYMARKET_API = "https://gamma-api.polymarket.com";
 const POLYMARKET_CLOB_API = "https://clob.polymarket.com";
 
-// Kalshi API endpoint
-const KALSHI_API = "https://trading-api.kalshi.com/trade-api/v2";
+// Kalshi API endpoint (updated to new domain)
+const KALSHI_API = "https://api.elections.kalshi.com/trade-api/v2";
 const KALSHI_API_KEY = process.env.KALSHI_API_KEY || "";
 
 // Configuration
