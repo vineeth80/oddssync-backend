@@ -33,13 +33,10 @@ const KALSHI_LIMIT = 500; // Increased from 100
 interface PolymarketMarketResponse {
   slug: string;
   question: string;
-  end_date_iso: string;
-  tokens: Array<{
-    token_id: string;
-    outcome: string;
-    price: string; // In cents
-    winner: boolean;
-  }>;
+  endDateIso: string; // Changed from end_date_iso to match API
+  outcomes: string[]; // e.g., ["Yes", "No"]
+  outcomePrices: string[]; // Prices as strings (e.g., ["0.52", "0.48"])
+  clobTokenIds: string[]; // Token IDs for order book
   volume: string;
   liquidity: string;
   active: boolean;
@@ -82,7 +79,7 @@ export async function fetchAndMatchMarkets() {
           return normalizer.normalizePolymarket({
             id: m.slug,
             title: m.question,
-            commence_time: Math.floor(new Date(m.end_date_iso).getTime() / 1000),
+            commence_time: Math.floor(new Date(m.endDateIso).getTime() / 1000),
           });
         } catch (e) {
           return null;
@@ -169,9 +166,11 @@ async function fetchPolymarketMarkets(): Promise<PolymarketMarketResponse[]> {
     // Filter for markets with valid data
     const filtered = markets.filter((m: PolymarketMarketResponse) =>
       m.active &&
-      m.tokens &&
-      m.tokens.length === 2 &&
-      m.end_date_iso
+      m.outcomes &&
+      m.outcomes.length === 2 &&
+      m.outcomePrices &&
+      m.outcomePrices.length === 2 &&
+      m.endDateIso
     );
     console.log(`[POLYMARKET] Got ${markets.length} raw markets, ${filtered.length} valid`);
     return filtered;
@@ -249,16 +248,17 @@ function calculateArbitrage(
   polyData: PolymarketMarketResponse,
   kalshiData: KalshiMarketResponse
 ) {
-  // Extract Polymarket prices (in cents)
-  const yesToken = polyData.tokens.find((t) => t.outcome.toLowerCase() === "yes");
-  const noToken = polyData.tokens.find((t) => t.outcome.toLowerCase() === "no");
+  // Extract Polymarket prices from new API format
+  const yesIndex = polyData.outcomes.findIndex((o) => o.toLowerCase() === "yes");
+  const noIndex = polyData.outcomes.findIndex((o) => o.toLowerCase() === "no");
 
-  if (!yesToken || !noToken) {
+  if (yesIndex === -1 || noIndex === -1) {
     return null;
   }
 
-  const poly_yes = parseFloat(yesToken.price) * 100; // Convert to cents
-  const poly_no = parseFloat(noToken.price) * 100;
+  // Prices are already in decimal format (0.52 = 52 cents), multiply by 100
+  const poly_yes = parseFloat(polyData.outcomePrices[yesIndex]) * 100;
+  const poly_no = parseFloat(polyData.outcomePrices[noIndex]) * 100;
 
   // Extract Kalshi prices (use mid price of bid/ask)
   const kalshi_yes = kalshiData.yes_ask ? kalshiData.yes_ask * 100 : 50; // Convert to cents
@@ -323,6 +323,6 @@ function calculateArbitrage(
     liquidity: {
       min_depth: minDepth,
     },
-    close_date: polyData.end_date_iso,
+    close_date: polyData.endDateIso,
   };
 }
