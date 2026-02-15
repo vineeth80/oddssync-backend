@@ -164,16 +164,17 @@ async function fetchPolymarketMarkets(): Promise<PolymarketMarketResponse[]> {
 
     const markets = await response.json() as PolymarketMarketResponse[];
 
-    // Filter for markets with valid data
-    const filtered = markets.filter((m: PolymarketMarketResponse) =>
-      m.active &&
-      m.outcomes &&
-      m.outcomes.length === 2 &&
-      m.outcomePrices &&
-      m.outcomePrices.length === 2 &&
-      m.endDateIso
-    );
+    // Filter for markets with valid data and track rejection reasons
+    let rejectionReasons = { active: 0, outcomes: 0, outcomePrices: 0, endDateIso: 0 };
+    const filtered = markets.filter((m: PolymarketMarketResponse) => {
+      if (!m.active) { rejectionReasons.active++; return false; }
+      if (!m.outcomes || m.outcomes.length !== 2) { rejectionReasons.outcomes++; return false; }
+      if (!m.outcomePrices || m.outcomePrices.length !== 2) { rejectionReasons.outcomePrices++; return false; }
+      if (!m.endDateIso) { rejectionReasons.endDateIso++; return false; }
+      return true;
+    });
     console.log(`[POLYMARKET] Got ${markets.length} raw markets, ${filtered.length} valid`);
+    console.log(`[POLYMARKET] Rejections: active=${rejectionReasons.active}, outcomes=${rejectionReasons.outcomes}, outcomePrices=${rejectionReasons.outcomePrices}, endDateIso=${rejectionReasons.endDateIso}`);
     return filtered;
   } catch (error) {
     console.error("[POLYMARKET] Fetch error:", error);
