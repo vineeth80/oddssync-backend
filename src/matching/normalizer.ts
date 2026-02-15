@@ -208,6 +208,21 @@ export class MarketNormalizer {
       }
     }
 
+    // FIX #2: Kalshi comma-separated parlays
+    // Pattern: "yes Team1,yes Team2,yes Team3" or "no Over 2.5,yes Under 1.5"
+    // Count occurrences of "yes " or "no " - if more than 2, it's a parlay
+    const yesCount = (title.match(/\byes\s/gi) || []).length;
+    const noCount = (title.match(/\bno\s/gi) || []).length;
+    if (yesCount + noCount > 2) {
+      return true;
+    }
+
+    // Also check for multiple commas indicating list of selections
+    const commaCount = (title.match(/,/g) || []).length;
+    if (commaCount >= 3) {
+      return true;
+    }
+
     return false;
   }
 

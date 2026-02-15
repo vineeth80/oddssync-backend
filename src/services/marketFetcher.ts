@@ -194,16 +194,22 @@ async function fetchPolymarketMarkets(): Promise<PolymarketMarketResponse[]> {
     }) as PolymarketMarketResponse[];
 
     // Filter for markets with valid data and track rejection reasons
-    let rejectionReasons = { active: 0, outcomes: 0, outcomePrices: 0, endDateIso: 0 };
+    const now = Date.now();
+    let rejectionReasons = { active: 0, outcomes: 0, outcomePrices: 0, endDateIso: 0, expired: 0 };
     const filtered = parsedMarkets.filter((m: PolymarketMarketResponse) => {
       if (!m.active) { rejectionReasons.active++; return false; }
       if (!m.outcomes || !Array.isArray(m.outcomes) || m.outcomes.length !== 2) { rejectionReasons.outcomes++; return false; }
       if (!m.outcomePrices || !Array.isArray(m.outcomePrices) || m.outcomePrices.length !== 2) { rejectionReasons.outcomePrices++; return false; }
       if (!m.endDateIso) { rejectionReasons.endDateIso++; return false; }
+
+      // FIX #1: Filter expired markets (end date in the past)
+      const endDate = new Date(m.endDateIso).getTime();
+      if (endDate < now) { rejectionReasons.expired++; return false; }
+
       return true;
     });
     console.log(`[POLYMARKET] Got ${markets.length} raw markets, ${filtered.length} valid`);
-    console.log(`[POLYMARKET] Rejections: active=${rejectionReasons.active}, outcomes=${rejectionReasons.outcomes}, outcomePrices=${rejectionReasons.outcomePrices}, endDateIso=${rejectionReasons.endDateIso}`);
+    console.log(`[POLYMARKET] Rejections: active=${rejectionReasons.active}, outcomes=${rejectionReasons.outcomes}, outcomePrices=${rejectionReasons.outcomePrices}, endDateIso=${rejectionReasons.endDateIso}, expired=${rejectionReasons.expired}`);
     return filtered;
   } catch (error) {
     console.error("[POLYMARKET] Fetch error:", error);
