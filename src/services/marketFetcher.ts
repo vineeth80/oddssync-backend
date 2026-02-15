@@ -160,7 +160,7 @@ async function fetchPolymarketMarkets(): Promise<PolymarketMarketResponse[]> {
       return [];
     }
 
-    const markets = await response.json();
+    const markets = await response.json() as PolymarketMarketResponse[];
 
     // Filter for markets with valid data
     return markets.filter((m: PolymarketMarketResponse) =>
@@ -204,14 +204,14 @@ async function fetchKalshiMarkets(): Promise<KalshiMarketResponse[]> {
           `${KALSHI_API}/markets?limit=100&status=open`
         );
         if (publicResponse.ok) {
-          const data = await publicResponse.json();
+          const data = await publicResponse.json() as { markets?: KalshiMarketResponse[] };
           return data.markets || [];
         }
       }
       return [];
     }
 
-    const data = await response.json();
+    const data = await response.json() as { markets?: KalshiMarketResponse[] };
     return data.markets || [];
   } catch (error) {
     console.error("[KALSHI] Fetch error:", error);
@@ -232,11 +232,14 @@ async function getPolymarketOrderBook(tokenId: string) {
       return null;
     }
 
-    const book = await response.json();
+    const book = await response.json() as {
+      bids?: Array<{ price: string }>;
+      asks?: Array<{ price: string }>;
+    };
 
     // Extract best bid/ask
-    const bestBid = book.bids?.[0]?.price || 0;
-    const bestAsk = book.asks?.[0]?.price || 0;
+    const bestBid = book.bids?.[0]?.price || "0";
+    const bestAsk = book.asks?.[0]?.price || "0";
 
     return {
       bid: parseFloat(bestBid),
