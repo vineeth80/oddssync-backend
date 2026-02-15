@@ -27,9 +27,9 @@ const POLYMARKET_CLOB_API = "https://clob.polymarket.com";
 const KALSHI_API = "https://api.elections.kalshi.com/trade-api/v2";
 const KALSHI_API_KEY = process.env.KALSHI_API_KEY || "";
 
-// Configuration
-const POLYMARKET_LIMIT = 500; // Increased from 100
-const KALSHI_LIMIT = 500; // Increased from 100
+// Configuration - FULL ANALYSIS MODE
+const POLYMARKET_LIMIT = 10000; // Fetch ALL markets for comprehensive analysis
+const KALSHI_LIMIT = 10000; // Fetch ALL markets for comprehensive analysis
 
 interface PolymarketMarketResponse {
   slug: string;
@@ -104,8 +104,9 @@ export async function fetchAndMatchMarkets() {
 
     console.log(`[FETCHER] Normalized ${pmNormalized.length} Polymarket, ${kalNormalized.length} Kalshi markets`);
 
-    // Diagnostic: Log sample market dates to understand temporal distribution
+    // COMPREHENSIVE ANALYSIS: Log market distribution and categories
     if (pmNormalized.length > 0 && kalNormalized.length > 0) {
+      // Sample dates
       const pmSample = pmNormalized.slice(0, 3);
       const kalSample = kalNormalized.slice(0, 3);
       console.log(`[DIAGNOSTIC] Sample Polymarket dates:`, pmSample.map(m => ({
@@ -118,6 +119,25 @@ export async function fetchAndMatchMarkets() {
         date: new Date(m.commenceTime * 1000).toISOString().split('T')[0],
         daysFromNow: Math.floor((m.commenceTime * 1000 - Date.now()) / (1000 * 60 * 60 * 24))
       })));
+
+      // Category distribution analysis
+      const pmCategories: Record<string, number> = {};
+      const kalCategories: Record<string, number> = {};
+
+      pmNormalized.forEach(m => {
+        pmCategories[m.marketCategory] = (pmCategories[m.marketCategory] || 0) + 1;
+      });
+
+      kalNormalized.forEach(m => {
+        kalCategories[m.marketCategory] = (kalCategories[m.marketCategory] || 0) + 1;
+      });
+
+      console.log(`[ANALYSIS] Polymarket categories:`, pmCategories);
+      console.log(`[ANALYSIS] Kalshi categories:`, kalCategories);
+
+      // Log 10 sample titles from each for keyword analysis
+      console.log(`[ANALYSIS] Polymarket sample titles:`, pmNormalized.slice(0, 10).map(m => m.rawTitle.substring(0, 60)));
+      console.log(`[ANALYSIS] Kalshi sample titles:`, kalNormalized.slice(0, 10).map(m => m.rawTitle.substring(0, 60)));
     }
 
     // Match markets using entity resolution
