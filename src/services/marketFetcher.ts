@@ -162,27 +162,27 @@ async function fetchPolymarketMarkets(): Promise<PolymarketMarketResponse[]> {
       return [];
     }
 
-    const markets = await response.json() as PolymarketMarketResponse[];
+    const markets = await response.json() as any[];
 
-    // Debug: Log first market to see actual structure
-    if (markets.length > 0) {
-      console.log(`[POLYMARKET DEBUG] First market sample:`, JSON.stringify({
-        slug: markets[0].slug,
-        hasOutcomes: !!markets[0].outcomes,
-        outcomesType: typeof markets[0].outcomes,
-        outcomesValue: markets[0].outcomes,
-        hasOutcomePrices: !!markets[0].outcomePrices,
-        hasEndDateIso: !!markets[0].endDateIso,
-        active: markets[0].active
-      }));
-    }
+    // Parse outcomes and outcomePrices from strings to arrays
+    const parsedMarkets = markets.map((m) => {
+      try {
+        return {
+          ...m,
+          outcomes: typeof m.outcomes === 'string' ? JSON.parse(m.outcomes) : m.outcomes,
+          outcomePrices: typeof m.outcomePrices === 'string' ? JSON.parse(m.outcomePrices) : m.outcomePrices,
+        };
+      } catch (e) {
+        return m; // Return as-is if parsing fails
+      }
+    }) as PolymarketMarketResponse[];
 
     // Filter for markets with valid data and track rejection reasons
     let rejectionReasons = { active: 0, outcomes: 0, outcomePrices: 0, endDateIso: 0 };
-    const filtered = markets.filter((m: PolymarketMarketResponse) => {
+    const filtered = parsedMarkets.filter((m: PolymarketMarketResponse) => {
       if (!m.active) { rejectionReasons.active++; return false; }
-      if (!m.outcomes || m.outcomes.length !== 2) { rejectionReasons.outcomes++; return false; }
-      if (!m.outcomePrices || m.outcomePrices.length !== 2) { rejectionReasons.outcomePrices++; return false; }
+      if (!m.outcomes || !Array.isArray(m.outcomes) || m.outcomes.length !== 2) { rejectionReasons.outcomes++; return false; }
+      if (!m.outcomePrices || !Array.isArray(m.outcomePrices) || m.outcomePrices.length !== 2) { rejectionReasons.outcomePrices++; return false; }
       if (!m.endDateIso) { rejectionReasons.endDateIso++; return false; }
       return true;
     });
