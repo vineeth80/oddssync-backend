@@ -25,7 +25,10 @@ const POLYMARKET_CLOB_API = "https://clob.polymarket.com";
 
 // Kalshi API endpoint
 const KALSHI_API = "https://trading-api.kalshi.com/trade-api/v2";
-const KALSHI_API_KEY = process.env.KALSHI_API_KEY || "";
+
+// Configuration
+const POLYMARKET_LIMIT = 500; // Increased from 100
+const KALSHI_LIMIT = 500; // Increased from 100
 
 interface PolymarketMarketResponse {
   slug: string;
@@ -152,8 +155,9 @@ export async function fetchAndMatchMarkets() {
  */
 async function fetchPolymarketMarkets(): Promise<PolymarketMarketResponse[]> {
   try {
+    console.log(`[POLYMARKET] Fetching up to ${POLYMARKET_LIMIT} markets...`);
     // Fetch active markets
-    const response = await fetch(`${POLYMARKET_API}/markets?closed=false&active=true&limit=100`);
+    const response = await fetch(`${POLYMARKET_API}/markets?closed=false&active=true&limit=${POLYMARKET_LIMIT}`);
 
     if (!response.ok) {
       console.error(`[POLYMARKET] API error: ${response.status}`);
@@ -163,12 +167,14 @@ async function fetchPolymarketMarkets(): Promise<PolymarketMarketResponse[]> {
     const markets = await response.json() as PolymarketMarketResponse[];
 
     // Filter for markets with valid data
-    return markets.filter((m: PolymarketMarketResponse) =>
+    const filtered = markets.filter((m: PolymarketMarketResponse) =>
       m.active &&
       m.tokens &&
       m.tokens.length === 2 &&
       m.end_date_iso
     );
+    console.log(`[POLYMARKET] Got ${markets.length} raw markets, ${filtered.length} valid`);
+    return filtered;
   } catch (error) {
     console.error("[POLYMARKET] Fetch error:", error);
     return [];
@@ -180,39 +186,22 @@ async function fetchPolymarketMarkets(): Promise<PolymarketMarketResponse[]> {
  */
 async function fetchKalshiMarkets(): Promise<KalshiMarketResponse[]> {
   try {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
+    console.log(`[KALSHI] Fetching up to ${KALSHI_LIMIT} markets (public API)...`);
 
-    // Add API key if available
-    if (KALSHI_API_KEY) {
-      headers["Authorization"] = `Bearer ${KALSHI_API_KEY}`;
-    }
-
-    // Fetch active markets
+    // Use public API (no authentication needed)
     const response = await fetch(
-      `${KALSHI_API}/markets?limit=100&status=open`,
-      { headers }
+      `${KALSHI_API}/markets?limit=${KALSHI_LIMIT}&status=open`
     );
 
     if (!response.ok) {
-      console.error(`[KALSHI] API error: ${response.status}`);
-      // Try without auth if it failed
-      if (KALSHI_API_KEY) {
-        console.log("[KALSHI] Retrying without auth...");
-        const publicResponse = await fetch(
-          `${KALSHI_API}/markets?limit=100&status=open`
-        );
-        if (publicResponse.ok) {
-          const data = await publicResponse.json() as { markets?: KalshiMarketResponse[] };
-          return data.markets || [];
-        }
-      }
+      console.error(`[KALSHI] API error: ${response.status} ${response.statusText}`);
       return [];
     }
 
     const data = await response.json() as { markets?: KalshiMarketResponse[] };
-    return data.markets || [];
+    const markets = data.markets || [];
+    console.log(`[KALSHI] Got ${markets.length} markets`);
+    return markets;
   } catch (error) {
     console.error("[KALSHI] Fetch error:", error);
     return [];
