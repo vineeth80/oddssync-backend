@@ -28,8 +28,8 @@ const KALSHI_API = "https://api.elections.kalshi.com/trade-api/v2";
 const KALSHI_API_KEY = process.env.KALSHI_API_KEY || "";
 
 // Configuration - FULL ANALYSIS MODE
-const POLYMARKET_LIMIT = 10000; // Fetch ALL markets for comprehensive analysis
-const KALSHI_LIMIT = 10000; // Fetch ALL markets for comprehensive analysis
+const POLYMARKET_LIMIT = 10000; // Polymarket hard limit is 500, but we'll request 10K
+const KALSHI_LIMIT = 1000; // Reduced from 10K - Kalshi might have lower limit
 
 interface PolymarketMarketResponse {
   slug: string;
@@ -310,7 +310,9 @@ async function fetchKalshiMarkets(): Promise<KalshiMarketResponse[]> {
         console.log(`[KALSHI] Got ${markets.length} markets`);
         return markets;
       } else {
-        console.log(`[KALSHI] Direct auth failed (${directResponse.status}), trying login flow...`);
+        const errorBody = await directResponse.text();
+        console.log(`[KALSHI] Direct auth failed (${directResponse.status}): ${errorBody.substring(0, 200)}`);
+        console.log("[KALSHI] Trying login flow...");
       }
     }
 
