@@ -57,9 +57,6 @@ const PARLAY_KEYWORDS = [
   "5-leg",
   "same game parlay",
   "sgp",
-  "&",
-  " and ",
-  " + ",
 ];
 
 /**
@@ -183,11 +180,35 @@ export class MarketNormalizer {
   }
 
   /**
-   * Detect if a market title contains parlay keywords
+   * Detect if a market title contains parlay keywords or patterns
    */
   private isParlay(title: string): boolean {
     const lowerTitle = title.toLowerCase();
-    return PARLAY_KEYWORDS.some((keyword) => lowerTitle.includes(keyword));
+
+    // Check for explicit parlay keywords
+    if (PARLAY_KEYWORDS.some((keyword) => lowerTitle.includes(keyword))) {
+      return true;
+    }
+
+    // Check for multiple game indicators (multiple "vs" or "@" = parlay)
+    const vsCount = (lowerTitle.match(/\svs\s/g) || []).length;
+    const atCount = (lowerTitle.match(/\s@\s/g) || []).length;
+    if (vsCount > 1 || atCount > 1 || (vsCount > 0 && atCount > 0)) {
+      return true;
+    }
+
+    // Check for betting notation with "&" between distinct propositions
+    // Pattern: "Team A ML & Team B +5.5" or "Over 50 & Chiefs win"
+    if (lowerTitle.includes(" & ") || lowerTitle.includes(" + ")) {
+      // Only flag as parlay if it looks like multiple betting props
+      // (has betting terms like ML, spread notation, over/under)
+      const hasBettingTerms = /\b(ml|moneyline|spread|\+\d+|-\d+|over|under)\b/i.test(lowerTitle);
+      if (hasBettingTerms && (lowerTitle.includes(" & ") || lowerTitle.includes(" + "))) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   /**
