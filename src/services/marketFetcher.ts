@@ -294,7 +294,7 @@ async function fetchKalshiMarkets(): Promise<KalshiMarketResponse[]> {
     if (KALSHI_API_KEY) {
       console.log("[KALSHI] Trying direct API key authentication");
       const directResponse = await fetch(
-        `${KALSHI_API}/markets?limit=${KALSHI_LIMIT}&status=open`,
+        `${KALSHI_API}/markets?limit=${KALSHI_LIMIT}&status=open&multivariate=exclude`,
         {
           headers: {
             "Content-Type": "application/json",
@@ -324,7 +324,7 @@ async function fetchKalshiMarkets(): Promise<KalshiMarketResponse[]> {
     }
 
     const response = await fetch(
-      `${KALSHI_API}/markets?limit=${KALSHI_LIMIT}&status=open`,
+      `${KALSHI_API}/markets?limit=${KALSHI_LIMIT}&status=open&multivariate=exclude`,
       {
         headers: {
           "Content-Type": "application/json",
