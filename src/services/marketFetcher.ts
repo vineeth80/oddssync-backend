@@ -12,7 +12,7 @@ import type { NormalizedMarket } from "../matching/models";
 
 const normalizer = new MarketNormalizer(ALL_SPORTS_ALIASES);
 const filter = new WaterfallFilter({
-  temporalThresholdSeconds: 3600,
+  temporalThresholdSeconds: 2592000, // 30 days - prediction markets have long horizons
   lineTolerance: 0.5,
 });
 
@@ -103,6 +103,22 @@ export async function fetchAndMatchMarkets() {
       .filter((m) => m !== null);
 
     console.log(`[FETCHER] Normalized ${pmNormalized.length} Polymarket, ${kalNormalized.length} Kalshi markets`);
+
+    // Diagnostic: Log sample market dates to understand temporal distribution
+    if (pmNormalized.length > 0 && kalNormalized.length > 0) {
+      const pmSample = pmNormalized.slice(0, 3);
+      const kalSample = kalNormalized.slice(0, 3);
+      console.log(`[DIAGNOSTIC] Sample Polymarket dates:`, pmSample.map(m => ({
+        title: m.rawTitle.substring(0, 50),
+        date: new Date(m.commenceTime * 1000).toISOString().split('T')[0],
+        daysFromNow: Math.floor((m.commenceTime * 1000 - Date.now()) / (1000 * 60 * 60 * 24))
+      })));
+      console.log(`[DIAGNOSTIC] Sample Kalshi dates:`, kalSample.map(m => ({
+        title: m.rawTitle.substring(0, 50),
+        date: new Date(m.commenceTime * 1000).toISOString().split('T')[0],
+        daysFromNow: Math.floor((m.commenceTime * 1000 - Date.now()) / (1000 * 60 * 60 * 24))
+      })));
+    }
 
     // Match markets using entity resolution
     const matches = filter.batchMatch(pmNormalized, kalNormalized);

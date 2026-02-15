@@ -40,7 +40,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 // Initialize matching components
 const normalizer = new MarketNormalizer(ALL_SPORTS_ALIASES);
 const filter = new WaterfallFilter({
-  temporalThresholdSeconds: 3600, // 1 hour
+  temporalThresholdSeconds: 2592000, // 30 days - prediction markets have long horizons
   lineTolerance: 0.5,
 });
 
