@@ -12,6 +12,7 @@ import { MarketNormalizer } from "./matching/normalizer";
 import { WaterfallFilter } from "./matching/filter";
 import { ALL_SPORTS_ALIASES, getAliasMapForSport } from "./config/entity-aliases";
 import type { PolymarketRawMarket, KalshiRawMarket } from "./matching/normalizer";
+import { fetchAndMatchMarkets } from "./services/marketFetcher";
 
 // Environment configuration
 const PORT = parseInt(process.env.PORT || "8080", 10);
@@ -83,6 +84,85 @@ app.get("/api/config", (req: Request, res: Response) => {
     aliasCount: Object.keys(ALL_SPORTS_ALIASES).length,
     sports: ["cfb", "nfl", "nba", "mlb"],
   });
+});
+
+/**
+ * Get markets with arbitrage opportunities (for frontend compatibility)
+ *
+ * GET /markets
+ * Query params:
+ *   - sort: "roi" | "spread" | "volume" (default: "roi")
+ *   - order: "asc" | "desc" (default: "desc")
+ *   - limit: number (default: 100)
+ *   - arbs_only: "true" | "false"
+ *   - search: string
+ */
+app.get("/markets", async (req: Request, res: Response) => {
+  try {
+    const { sort = "roi", order = "desc", limit = "100", arbs_only, search } = req.query;
+
+    // Fetch and match markets
+    const data = await fetchAndMatchMarkets();
+
+    let filtered = data.markets;
+
+    // Filter: arbs only
+    if (arbs_only === "true") {
+      filtered = filtered.filter((m) => m.arb !== null);
+    }
+
+    // Filter: search query
+    if (search && typeof search === "string") {
+      const query = search.toLowerCase();
+      filtered = filtered.filter((m) =>
+        m.title.toLowerCase().includes(query)
+      );
+    }
+
+    // Sort
+    const sortField = sort as string;
+    filtered.sort((a, b) => {
+      let aVal = 0;
+      let bVal = 0;
+
+      if (sortField === "roi") {
+        aVal = a.arb?.roi_pct || 0;
+        bVal = b.arb?.roi_pct || 0;
+      } else if (sortField === "spread") {
+        aVal = a.spread || 0;
+        bVal = b.spread || 0;
+      } else if (sortField === "volume") {
+        aVal = a.kalshi?.volume_24h || 0;
+        bVal = b.kalshi?.volume_24h || 0;
+      } else if (sortField === "close_date") {
+        aVal = new Date(a.close_date).getTime();
+        bVal = new Date(b.close_date).getTime();
+      }
+
+      return order === "desc" ? bVal - aVal : aVal - bVal;
+    });
+
+    // Limit results
+    const limitNum = parseInt(limit as string, 10) || 100;
+    filtered = filtered.slice(0, limitNum);
+
+    res.json({
+      markets: filtered,
+      meta: {
+        ...data.meta,
+        total: filtered.length,
+        arb_count: filtered.filter((m) => m.arb).length,
+      },
+    });
+  } catch (error: any) {
+    console.error("[ERROR] /markets endpoint:", error);
+    res.status(500).json({
+      error: "Failed to fetch markets",
+      message: error.message,
+      markets: [],
+      meta: { total: 0, arb_count: 0, last_refresh: null },
+    });
+  }
 });
 
 /**
