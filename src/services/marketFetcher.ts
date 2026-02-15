@@ -196,27 +196,69 @@ async function fetchPolymarketMarkets(): Promise<PolymarketMarketResponse[]> {
 }
 
 /**
+ * Login to Kalshi and get session token
+ */
+async function kalshiLogin(): Promise<string | null> {
+  try {
+    const KALSHI_EMAIL = process.env.KALSHI_EMAIL || "";
+
+    if (!KALSHI_EMAIL || !KALSHI_API_KEY) {
+      console.error("[KALSHI] Missing email or API key");
+      return null;
+    }
+
+    console.log(`[KALSHI] Logging in with email: ${KALSHI_EMAIL}`);
+
+    const response = await fetch(`${KALSHI_API}/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: KALSHI_EMAIL,
+        password: KALSHI_API_KEY,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error(`[KALSHI] Login failed: ${response.status} ${response.statusText}`);
+      return null;
+    }
+
+    const data = await response.json() as { token?: string };
+    if (data.token) {
+      console.log("[KALSHI] Login successful");
+      return data.token;
+    }
+
+    console.error("[KALSHI] No token in login response");
+    return null;
+  } catch (error) {
+    console.error("[KALSHI] Login error:", error);
+    return null;
+  }
+}
+
+/**
  * Fetch markets from Kalshi API
  */
 async function fetchKalshiMarkets(): Promise<KalshiMarketResponse[]> {
   try {
     console.log(`[KALSHI] Fetching up to ${KALSHI_LIMIT} markets...`);
 
-    // Prepare headers with API key if available
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
-
-    if (KALSHI_API_KEY) {
-      headers["Authorization"] = `Bearer ${KALSHI_API_KEY}`;
-      console.log("[KALSHI] Using API key for authentication");
-    } else {
-      console.log("[KALSHI] Warning: No API key provided, trying public access");
+    // Login to get session token
+    const token = await kalshiLogin();
+    if (!token) {
+      console.error("[KALSHI] Cannot fetch markets without authentication");
+      return [];
     }
 
     const response = await fetch(
       `${KALSHI_API}/markets?limit=${KALSHI_LIMIT}&status=open`,
-      { headers }
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
+      }
     );
 
     if (!response.ok) {
