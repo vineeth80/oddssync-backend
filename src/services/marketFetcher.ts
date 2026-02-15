@@ -16,39 +16,125 @@ const filter = new WaterfallFilter({
   lineTolerance: 0.5,
 });
 
-// Mock data for now - replace with real API calls
+const KALSHI_FEE = 0.02; // 2%
+const POLY_FEE = 0.01; // 1%
+
+// Polymarket API endpoints
+const POLYMARKET_API = "https://gamma-api.polymarket.com";
+const POLYMARKET_CLOB_API = "https://clob.polymarket.com";
+
+// Kalshi API endpoint
+const KALSHI_API = "https://trading-api.kalshi.com/trade-api/v2";
+const KALSHI_API_KEY = process.env.KALSHI_API_KEY || "";
+
+interface PolymarketMarketResponse {
+  slug: string;
+  question: string;
+  end_date_iso: string;
+  tokens: Array<{
+    token_id: string;
+    outcome: string;
+    price: string; // In cents
+    winner: boolean;
+  }>;
+  volume: string;
+  liquidity: string;
+  active: boolean;
+}
+
+interface KalshiMarketResponse {
+  ticker: string;
+  title: string;
+  expiration_time: string;
+  close_time: string;
+  yes_bid: number;
+  yes_ask: number;
+  no_bid: number;
+  no_ask: number;
+  volume: number;
+  open_interest: number;
+  liquidity: number;
+  status: string;
+}
+
+/**
+ * Main function to fetch and match markets
+ */
 export async function fetchAndMatchMarkets() {
   try {
-    // TODO: Replace with real Polymarket API call
-    const polymarketMarkets = await fetchPolymarketMarkets();
+    console.log("[FETCHER] Starting market fetch...");
 
-    // TODO: Replace with real Kalshi API call
-    const kalshiMarkets = await fetchKalshiMarkets();
+    // Fetch markets from both platforms in parallel
+    const [polymarketMarkets, kalshiMarkets] = await Promise.all([
+      fetchPolymarketMarkets(),
+      fetchKalshiMarkets(),
+    ]);
+
+    console.log(`[FETCHER] Fetched ${polymarketMarkets.length} Polymarket, ${kalshiMarkets.length} Kalshi markets`);
 
     // Normalize markets
     const pmNormalized = polymarketMarkets
-      .map((m) => normalizer.normalizePolymarket(m))
+      .map((m) => {
+        try {
+          return normalizer.normalizePolymarket({
+            id: m.slug,
+            title: m.question,
+            commence_time: Math.floor(new Date(m.end_date_iso).getTime() / 1000),
+          });
+        } catch (e) {
+          return null;
+        }
+      })
       .filter((m) => m !== null);
 
     const kalNormalized = kalshiMarkets
-      .map((m) => normalizer.normalizeKalshi(m))
+      .map((m) => {
+        try {
+          return normalizer.normalizeKalshi({
+            ticker: m.ticker,
+            title: m.title,
+            expiration_time: Math.floor(new Date(m.expiration_time).getTime() / 1000),
+          });
+        } catch (e) {
+          return null;
+        }
+      })
       .filter((m) => m !== null);
 
     console.log(`[FETCHER] Normalized ${pmNormalized.length} Polymarket, ${kalNormalized.length} Kalshi markets`);
 
-    // Match markets
+    // Match markets using entity resolution
     const matches = filter.batchMatch(pmNormalized, kalNormalized);
 
-    // Calculate arbitrage opportunities
-    const marketsWithArb = matches.map((match) => {
-      return calculateArbitrage(match.polymarketMarket, match.kalshiMarket);
-    });
+    console.log(`[FETCHER] Found ${matches.length} matches`);
+
+    // Calculate arbitrage opportunities with real pricing data
+    const marketsWithArb = await Promise.all(
+      matches.map(async (match) => {
+        // Find the original market data
+        const polyData = polymarketMarkets.find((m) => m.slug === match.polymarketMarket.marketId);
+        const kalshiData = kalshiMarkets.find((m) => m.ticker === match.kalshiMarket.marketId);
+
+        if (!polyData || !kalshiData) {
+          return null;
+        }
+
+        return calculateArbitrage(
+          match.polymarketMarket,
+          match.kalshiMarket,
+          polyData,
+          kalshiData
+        );
+      })
+    );
+
+    const validMarkets = marketsWithArb.filter((m) => m !== null);
 
     return {
-      markets: marketsWithArb,
+      markets: validMarkets,
       meta: {
-        total: marketsWithArb.length,
-        arb_count: marketsWithArb.filter(m => m.arb).length,
+        total: validMarkets.length,
+        arb_count: validMarkets.filter((m) => m.arb).length,
         last_refresh: new Date().toISOString(),
         polymarket_count: pmNormalized.length,
         kalshi_count: kalNormalized.length,
@@ -63,60 +149,133 @@ export async function fetchAndMatchMarkets() {
 
 /**
  * Fetch markets from Polymarket API
- * TODO: Replace with real API integration
  */
-async function fetchPolymarketMarkets() {
-  // Mock data - replace with actual Polymarket API call
-  // Example: const response = await fetch('https://gamma-api.polymarket.com/markets');
+async function fetchPolymarketMarkets(): Promise<PolymarketMarketResponse[]> {
+  try {
+    // Fetch active markets
+    const response = await fetch(`${POLYMARKET_API}/markets?closed=false&active=true&limit=100`);
 
-  return [
-    {
-      id: "pm_demo_1",
-      title: "Texas vs Oklahoma - Winner",
-      commence_time: Math.floor(Date.now() / 1000) + 86400,
-    },
-    {
-      id: "pm_demo_2",
-      title: "Alabama vs Georgia - Winner",
-      commence_time: Math.floor(Date.now() / 1000) + 86400,
-    },
-  ];
+    if (!response.ok) {
+      console.error(`[POLYMARKET] API error: ${response.status}`);
+      return [];
+    }
+
+    const markets = await response.json();
+
+    // Filter for markets with valid data
+    return markets.filter((m: PolymarketMarketResponse) =>
+      m.active &&
+      m.tokens &&
+      m.tokens.length === 2 &&
+      m.end_date_iso
+    );
+  } catch (error) {
+    console.error("[POLYMARKET] Fetch error:", error);
+    return [];
+  }
 }
 
 /**
  * Fetch markets from Kalshi API
- * TODO: Replace with real API integration
  */
-async function fetchKalshiMarkets() {
-  // Mock data - replace with actual Kalshi API call
-  // Example: const response = await fetch('https://api.kalshi.com/v1/markets');
+async function fetchKalshiMarkets(): Promise<KalshiMarketResponse[]> {
+  try {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
 
-  return [
-    {
-      ticker: "kx_demo_1",
-      title: "Texas vs Oklahoma - To Win",
-      expiration_time: Math.floor(Date.now() / 1000) + 86400,
-    },
-    {
-      ticker: "kx_demo_2",
-      title: "Alabama vs Georgia - To Win",
-      expiration_time: Math.floor(Date.now() / 1000) + 86400,
-    },
-  ];
+    // Add API key if available
+    if (KALSHI_API_KEY) {
+      headers["Authorization"] = `Bearer ${KALSHI_API_KEY}`;
+    }
+
+    // Fetch active markets
+    const response = await fetch(
+      `${KALSHI_API}/markets?limit=100&status=open`,
+      { headers }
+    );
+
+    if (!response.ok) {
+      console.error(`[KALSHI] API error: ${response.status}`);
+      // Try without auth if it failed
+      if (KALSHI_API_KEY) {
+        console.log("[KALSHI] Retrying without auth...");
+        const publicResponse = await fetch(
+          `${KALSHI_API}/markets?limit=100&status=open`
+        );
+        if (publicResponse.ok) {
+          const data = await publicResponse.json();
+          return data.markets || [];
+        }
+      }
+      return [];
+    }
+
+    const data = await response.json();
+    return data.markets || [];
+  } catch (error) {
+    console.error("[KALSHI] Fetch error:", error);
+    return [];
+  }
 }
 
 /**
- * Calculate arbitrage opportunity between two matched markets
+ * Get order book data from Polymarket for a specific market
  */
-function calculateArbitrage(polymarket: NormalizedMarket, kalshi: NormalizedMarket) {
-  // Mock pricing data - replace with real market data
-  const poly_yes = 52; // cents
-  const poly_no = 48;
-  const kalshi_yes = 54;
-  const kalshi_no = 46;
+async function getPolymarketOrderBook(tokenId: string) {
+  try {
+    const response = await fetch(
+      `${POLYMARKET_CLOB_API}/book?token_id=${tokenId}`
+    );
 
-  const KALSHI_FEE = 0.02;
-  const POLY_FEE = 0.01;
+    if (!response.ok) {
+      return null;
+    }
+
+    const book = await response.json();
+
+    // Extract best bid/ask
+    const bestBid = book.bids?.[0]?.price || 0;
+    const bestAsk = book.asks?.[0]?.price || 0;
+
+    return {
+      bid: parseFloat(bestBid),
+      ask: parseFloat(bestAsk),
+    };
+  } catch (error) {
+    console.error("[POLYMARKET] Order book error:", error);
+    return null;
+  }
+}
+
+/**
+ * Calculate arbitrage opportunity between two matched markets with REAL pricing data
+ */
+function calculateArbitrage(
+  polymarket: NormalizedMarket,
+  kalshi: NormalizedMarket,
+  polyData: PolymarketMarketResponse,
+  kalshiData: KalshiMarketResponse
+) {
+  // Extract Polymarket prices (in cents)
+  const yesToken = polyData.tokens.find((t) => t.outcome.toLowerCase() === "yes");
+  const noToken = polyData.tokens.find((t) => t.outcome.toLowerCase() === "no");
+
+  if (!yesToken || !noToken) {
+    return null;
+  }
+
+  const poly_yes = parseFloat(yesToken.price) * 100; // Convert to cents
+  const poly_no = parseFloat(noToken.price) * 100;
+
+  // Extract Kalshi prices (use mid price of bid/ask)
+  const kalshi_yes = kalshiData.yes_ask ? kalshiData.yes_ask * 100 : 50; // Convert to cents
+  const kalshi_no = kalshiData.no_ask ? kalshiData.no_ask * 100 : 50;
+
+  // Validate prices
+  if (poly_yes <= 0 || poly_no <= 0 || kalshi_yes <= 0 || kalshi_no <= 0) {
+    return null;
+  }
 
   // Strategy 1: YES on Kalshi, NO on Poly
   const strategy1_cost = kalshi_yes + poly_no;
@@ -128,42 +287,50 @@ function calculateArbitrage(polymarket: NormalizedMarket, kalshi: NormalizedMark
   const strategy2_fees = poly_yes * POLY_FEE + kalshi_no * KALSHI_FEE;
   const strategy2_profit = 100 - strategy2_cost - strategy2_fees;
 
-  const bestStrategy = strategy1_profit > strategy2_profit ?
-    {
-      strategy: "YES_KALSHI_NO_POLY" as const,
-      cost_per_contract: strategy1_cost / 100,
-      fee_per_contract: strategy1_fees / 100,
-      profit_per_contract: strategy1_profit / 100,
-      roi_pct: (strategy1_profit / strategy1_cost) * 100,
-    } : {
-      strategy: "YES_POLY_NO_KALSHI" as const,
-      cost_per_contract: strategy2_cost / 100,
-      fee_per_contract: strategy2_fees / 100,
-      profit_per_contract: strategy2_profit / 100,
-      roi_pct: (strategy2_profit / strategy2_cost) * 100,
-    };
+  // Choose best strategy
+  const bestStrategy =
+    strategy1_profit > strategy2_profit
+      ? {
+          strategy: "YES_KALSHI_NO_POLY" as const,
+          cost_per_contract: strategy1_cost / 100,
+          fee_per_contract: strategy1_fees / 100,
+          profit_per_contract: strategy1_profit / 100,
+          roi_pct: (strategy1_profit / strategy1_cost) * 100,
+        }
+      : {
+          strategy: "YES_POLY_NO_KALSHI" as const,
+          cost_per_contract: strategy2_cost / 100,
+          fee_per_contract: strategy2_fees / 100,
+          profit_per_contract: strategy2_profit / 100,
+          roi_pct: (strategy2_profit / strategy2_cost) * 100,
+        };
 
   const hasArb = bestStrategy.profit_per_contract > 0;
+
+  // Calculate liquidity
+  const polyLiquidity = parseFloat(polyData.liquidity || "0");
+  const kalshiLiquidity = kalshiData.liquidity || kalshiData.open_interest || 0;
+  const minDepth = Math.min(polyLiquidity, kalshiLiquidity);
 
   return {
     id: `${polymarket.marketId}_${kalshi.marketId}`,
     title: polymarket.rawTitle,
     category: polymarket.marketCategory,
     kalshi: {
-      yes_price: kalshi_yes,
-      no_price: kalshi_no,
-      volume_24h: 1000000,
+      yes_price: Math.round(kalshi_yes),
+      no_price: Math.round(kalshi_no),
+      volume_24h: kalshiData.volume || 0,
     },
     poly: {
-      yes_price: poly_yes,
-      no_price: poly_no,
-      volume_24h: 500000,
+      yes_price: Math.round(poly_yes),
+      no_price: Math.round(poly_no),
+      volume_24h: parseFloat(polyData.volume || "0"),
     },
     spread: Math.abs(kalshi_yes - poly_yes),
     arb: hasArb ? bestStrategy : null,
     liquidity: {
-      min_depth: 50000,
+      min_depth: minDepth,
     },
-    close_date: new Date(polymarket.commenceTime * 1000).toISOString(),
+    close_date: polyData.end_date_iso,
   };
 }
