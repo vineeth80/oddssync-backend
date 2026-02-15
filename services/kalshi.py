@@ -136,7 +136,7 @@ def _parse_market(raw: dict[str, Any]) -> Optional[dict[str, Any]]:
             "volume_24h": raw.get("volume_24h", 0) or 0,
             "open_interest": raw.get("open_interest", 0) or 0,
             "close_time": raw.get("close_time") or raw.get("expiration_time"),
-            "status": raw.get("status", "open"),
+            "status": "open",  # We only fetch open markets from the API
         }
     except Exception:
         logger.debug("Failed to parse Kalshi market %s", raw.get("ticker"), exc_info=True)

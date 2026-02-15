@@ -138,7 +138,7 @@ async def run_matching() -> int:
 
     Returns count of matches found.
     """
-    kalshi_markets = await get_all_kalshi_markets(status="open")
+    kalshi_markets = await get_all_kalshi_markets()
     poly_markets = await get_all_poly_markets(active=True)
 
     if not kalshi_markets or not poly_markets:
