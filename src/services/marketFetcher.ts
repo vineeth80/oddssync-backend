@@ -219,17 +219,21 @@ async function kalshiLogin(): Promise<string | null> {
     });
 
     if (!response.ok) {
+      const errorText = await response.text();
       console.error(`[KALSHI] Login failed: ${response.status} ${response.statusText}`);
+      console.error(`[KALSHI] Error body:`, errorText);
       return null;
     }
 
     const data = await response.json() as { token?: string };
+    console.log(`[KALSHI] Login response:`, JSON.stringify(data).substring(0, 200));
+
     if (data.token) {
-      console.log("[KALSHI] Login successful");
+      console.log("[KALSHI] Login successful, token received");
       return data.token;
     }
 
-    console.error("[KALSHI] No token in login response");
+    console.error("[KALSHI] No token in login response. Keys:", Object.keys(data));
     return null;
   } catch (error) {
     console.error("[KALSHI] Login error:", error);
